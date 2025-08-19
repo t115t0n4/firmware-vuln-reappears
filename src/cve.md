@@ -145,9 +145,52 @@ print(response.text)
 
 要想 rce，那我们就得精心构造合适的 payload。先来学一下 [mips-rop](./mips.md)
 
+### 跟踪调用
+
 先来调试一下看看我们的 payload 是怎样布置到栈上的
 
 ```bash
 sudo chroot . ./qemu-mipsel-static -g 1234 ./bin/httpd
 ```
 
+```bash
+gdb-multiarch httpd
+pwndbg> target remote 192.168.2.180:1234
+```
+
+我们先在 `formSetFirewallCfg` 的位置打上断点，然后 c 一下让服务跑起来，此时 httpd 正在等待我们的请求，我们来测试一下
+
+```python
+import requests
+
+url = 'http://192.168.2.165/goform/SetFirewallCfg'
+
+
+payload = 'test'
+
+
+data = {"firewallEn": payload}
+
+response = requests.post(url, data=data)
+
+print(response.status_code)
+print(response.text)
+```
+
+ ![image-20250819164038574](./img/cve/image-20250819164038574.png)
+
+这里可以看到，websGetVar 函数处理后得到的就是我们传入的 'test'
+
+![image-20250819165357689](./img/cve/image-20250819165357689.png)
+
+strcpy 之后，'test' 就被复制到 $sp+0x28 的位置了。所以这里的溢出还是很好利用的，我们前面的猜测也是完全正确的。
+
+![image-20250819170628843](./img/cve/image-20250819170628843.png)
+
+$sp+0xbc 的位置保存着返回地址。前面我们 pos 的时候正是将这里覆盖成了一个无效的地址而导致函数返回的时候崩溃。
+
+### 漏洞利用（ROP）
+
+![image-20250819172636312](./img/cve/image-20250819172636312.png)
+
+这里可以看到，栈是不可执行的，所以 `shellcode in stack` 的链子就打不了了。
